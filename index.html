@@ -1,85 +1,188 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="ja">
 
 <head>
-    <title>チャットアプリをつくってみよう</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-size: 14px;
-            max-width: 600px;
-            width: 100%;
-            margin: 0 auto;
-            padding: 0 15px;
-            position: relative;
-        }
-
-        #chatSend {
-            padding: 3px 15px;
-            position: fixed;
-            bottom: 5px;
-            width: 100%;
-            max-width: 600px;
-        }
-
-        #chatText {
-            border: 2px solid #ccc;
-            padding: 10px;
-            width: 90%;
-            margin-right: .5%;
-            border-radius: 5px;
-        }
-
-        #sendButton {
-            width: 9%;
-            background: rgb(130, 224, 255);
-            border: none;
-            padding: 10px;
-            border-radius: 5px;
-        }
-
-        #timeline {
-            list-style-type: none;
-            margin: 0;
-            padding: 0;
-        }
-
-        #timeline li {
-            padding: 5px 10px;
-        }
-
-        #timeline li:nth-child(odd) {
-            background: #eee;
-        }
-    </style>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="./style.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WebRTC ビデオチャット</title>
 </head>
 
 <body>
-    <h1>チャットアプリをつくってみよう</h1>
-    <ul id="timeline"></ul>
-    <form id="chatSend" action="">
-        <input id="chatText" autocomplete="off"><button id="sendButton">送信</button>
-    </form>
-    <!-- scriptの処理を追加 -->
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="https://code.jquery.com/jquery-1.11.1.js"></script>
+    <div id="app">
+        <div class="videoContainer">
+            <div>
+                Local
+                <video id="localVideo" autoplay playsinline></video>
+            </div>
+            <div>
+                Remote
+                <video id="remoteVideo" autoplay playsinline></video>
+            </div>
+        </div>
+        <div class="buttonWrapper">
+            <div class="buttonContainer">
+                <p><b>| offer側の操作</b></p>
+                <button id="createOfferButton">① Offerを生成</button>
+                <button id="setAnswerButton">④ Answerを登録</button>
+                <button id="copyIceCandidateButton">⑤ ICE経路情報をコピー</button>
+            </div>
+            <div class="buttonContainer">
+                <p><b>| answer側の操作</b></p>
+                <button id="setOfferButton">② Offerを登録</button>
+                <button id="createAnswerButton">③ Answerを生成</button>
+                <button id="setIceCandidateButton">⑥ ICE経路情報を登録</button>
+            </div>
+        </div>
+        <div class="infoContainer">
+            <textarea id="input"></textarea>
+            <textarea id="textContainer"></textarea>
+        </div>
+    </div>
     <script>
-        $(function () {
-            var socket = io();
-            $('form').submit(function () {
-                socket.emit('chat message', $('#chatText').val());
-                $('#chatText').val('');
-                return false;
-            });
-            socket.on('chat message', function (msg) {
-                $('#timeline').append($('<li>').text(msg));
-            });
-        });
+        // ===== user1, user2共通 ===== //
+
+            //html要素の取得
+            const textContainer = document.getElementById('textContainer');
+            const input = document.getElementById('input');
+            input.placeholder = '手動接続用の入力欄';
+
+            const localVideo = document.getElementById('localVideo');
+            const remoteVideo = document.getElementById('remoteVideo');
+
+            const createOfferButton = document.getElementById('createOfferButton');
+            const setAnswerButton = document.getElementById('setAnswerButton');
+            const copyIceCandidateButton = document.getElementById('copyIceCandidateButton');
+            const createAnswerButton = document.getElementById('createAnswerButton');
+            const setOfferButton = document.getElementById('setOfferButton');
+            const setIceCandidateButton = document.getElementById('setIceCandidateButton');
+
+            //user1とuser2のRTCPeerConnectionを生成。
+            const user1Connection = new RTCPeerConnection();
+            const user2Connection = new RTCPeerConnection();
+
+            //mediaStreamを取得し、トラックをRTCPeerConnectionに登録
+            navigator.mediaDevices
+                .getUserMedia({ audio: true, video: true })
+                .then((stream) => {
+                    localVideo.srcObject = stream;
+                    //音声トラックとビデオトラックをRTCPeerConnectionに登録
+                    stream.getTracks().forEach((track) => {
+                        user1Connection.addTrack(track, stream);
+                        user2Connection.addTrack(track, stream);
+                    });
+                });
+
+            const copyToClipboard = (data, message = { success, fail }) => {
+                //文字列をデバイスのクリップボードにコピー
+                navigator.clipboard
+                    .writeText(data)
+                    .then(() => textContainer.innerHTML = message.success)
+                    .catch((e) => textContainer.innerHTML = message.fail + data);
+            }
+
+            // ===== user1 ===== //
+
+            createOfferButton.onclick = () => {
+                //Offerを生成
+                user1Connection
+                    .createOffer()
+                    .then((offer) => user1Connection.setLocalDescription(offer))
+                    .then(() => {
+                        console.log(user1Connection.localDescription);
+                        copyToClipboard(
+                            JSON.stringify(user1Connection.localDescription),
+                            {
+                                success: 'SDP Offerをクリップボードにコピーしました。\nもう1つウィンドウで入力欄に貼り付け「② Offerを登録」を押してください。',
+                                fail: '● 以下の文字列をコピーし、もう1つウィンドウで入力欄に貼り付け「② Offerを登録」を押してください。\n\n'
+                            }
+                        )
+                    });
+            };
+
+            setAnswerButton.onclick = async () => {
+                //Answerを登録
+                const answer = input.value;
+                try {
+                    await user1Connection.setRemoteDescription(JSON.parse(answer)).then(() => {
+                        textContainer.innerHTML = 'Answerを登録しました。';
+                    });
+                } catch (e) {
+                    textContainer.innerHTML = "Answerの登録に失敗しました。\n正しくSDP Answerがコピー・ペーストできているか確認してください。";
+                }
+            };
+
+            //setLocalDescription()で発火するイベント. ICE Candidateを配列に格納しておく
+            const candidates = [];
+            user1Connection.onicecandidate = (e) => candidates.push(e.candidate);
+
+            copyIceCandidateButton.onclick = () => {
+                //保存しておいたICE Candidatesをクリップボードにコピー
+                copyToClipboard(
+                    JSON.stringify(candidates),
+                    {
+                        success: 'ICE Candidateをクリップボードにコピーしました。\nもう1つウィンドウで入力欄に貼り付け「⑥ ICE経路情報を登録」を押してください。',
+                        fail: '● 以下の文字列をコピーし、もう1つウィンドウで入力欄に貼り付け「⑥ ICE経路情報を登録」を押してください。\n\n'
+                    }
+                )
+            };
+
+            //相手からのトラックを受信したら、remoteVideoにセット
+            user1Connection.ontrack = e => remoteVideo.srcObject = e.streams[0];
+
+            // ===== user2 ===== //
+
+            createAnswerButton.onclick = async () => {
+                //SDP Answerを生成
+                try {
+                    await user2Connection
+                        .createAnswer()
+                        .then((answer) => user2Connection.setLocalDescription(answer))
+                        .then(() => {
+                            console.log(user2Connection.localDescription);
+                            copyToClipboard(
+                                JSON.stringify(user2Connection.localDescription),
+                                {
+                                    success: 'SDP Answerをクリップボードにコピーしました。\nもう1つウィンドウで入力欄に貼り付け「④ Answerを登録」を押してください。',
+                                    fail: '● 以下の文字列をコピーし、もう1つウィンドウで入力欄に貼り付け「④ Answerを登録」を押してください。\n\n'
+                                }
+                            )
+                        });
+                } catch (e) {
+                    console.error(e);
+                    textContainer.innerHTML = "Answerの生成に失敗しました。\n正しくOfferが登録できているか確認してください。";
+                }
+            };
+
+            setOfferButton.onclick = async () => {
+                //Offerを登録
+                const offer = input.value;
+                try {
+                    await user2Connection.setRemoteDescription(JSON.parse(offer)).then(() => {
+                        textContainer.innerHTML = 'Offerを登録しました。';
+                    });
+                } catch (e) {
+                    textContainer.innerHTML = "Offerの登録に失敗しました。\n正しくSDP Offerがコピー・ペーストできているか確認してください。";
+                }
+            };
+
+            setIceCandidateButton.onclick = () => {
+                //ICE Candidatesを登録
+                const candidatesStr = input.value;
+                try {
+                    const senderCandidates = JSON.parse(candidatesStr);
+                    senderCandidates.forEach(async (candidate) => {
+                        if (candidate === null) return;
+                        await user2Connection.addIceCandidate(candidate)
+                    });
+                    textContainer.innerHTML = 'ICE経路情報を登録しました。';
+                } catch (e) {
+                    textContainer.innerHTML = "ICE経路情報の登録に失敗しました。\n正しくICE経路情報がコピー・ペーストできているか確認してください。";
+                }
+            };
+
+            //相手からのトラックを受信したら、remoteVideoにセット
+            user2Connection.ontrack = e => remoteVideo.srcObject = e.streams[0];
     </script>
 </body>
 
